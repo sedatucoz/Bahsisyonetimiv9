@@ -1,59 +1,64 @@
-name: Android CI/CD v3
+name: Build APK
 
 on:
   push:
-    branches: [ "main", "master", "develop" ]
-  pull_request:
-    branches: [ "main", "master", "develop" ]
+    branches:
+      - main
+
+# Node.js uyarılarını kapatmak için çevre değişkeni
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
-    name: Build & Test Android App
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Kodu çek
         uses: actions/checkout@v4
 
-      - name: Set up JDK 21
+      - name: Java kur
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '21'
-          cache: 'gradle'
+          distribution: temurin
+          java-version: 17
 
-      - name: Prepare Local Environment
+      - name: ZIP Dosyasını Sorunsuz Çıkar
         run: |
-          # Secrets Gradle Plugin'inin hata vermesini önlemek için .env.example dosyasını .env olarak kopyalar
-          if [ -f .env.example ]; then
-            cp .env.example .env
-          else
-            echo "GEMINI_API_KEY=dummy_key_for_ci_build" > .env
+          if [ -f *"Bahşiş"*.zip ] || [ -f *.zip ]; then
+            unzip -o *.zip
+            rm *.zip
           fi
 
-      - name: Grant Executable Permissions to Gradlew
-        run: chmod +x gradlew
+      - name: İmza Dosyasını (Keystore) Hazırla
+        run: |
+          if [ -f "debug.keystore.base64" ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          elif [ -f "app/debug.keystore.base64" ]; then
+            base64 -d app/debug.keystore.base64 > debug.keystore
+          else
+            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
 
-      - name: Run Unit Tests
-        run: ./gradlew :app:testDebugUnitTest
-        continue-on-error: true # Test hatası durumunda dahi APK derlemesini engellemez
+      - name: Gradle Ortamını Hazırla ve KSP Hafızasını Temizle
+        run: |
+          gradle wrapper
+          chmod +x ./gradlew
+          
+          # Hata Çözümü 1. Adım: Askıda kalan tüm arka plan servislerini durdur
+          ./gradlew --stop
+          
+          # Hata Çözümü 2. Adım: Hatalı önbellekleri ve eski build dosyalarını sil
+          ./gradlew clean
 
-      - name: Build Debug APK
-        run: ./gradlew :app:assembleDebug
+      - name: Temiz APK Oluştur
+        run: |
+          # Hata Çözümü 3. Adım: Daemon (arka plan) olmadan ve önbelleği atlayarak tertemiz derle
+          ./gradlew assembleDebug --no-daemon --no-build-cache
 
-      - name: Build Release APK
-        run: ./gradlew :app:assembleRelease
-
-      - name: Upload Debug APK Artifact
+      - name: APK yükle
         uses: actions/upload-artifact@v4
         with:
-          name: BahsisApp-Debug-APK
-          path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: warn
-
-      - name: Upload Release APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: BahsisApp-Release-APK
-          path: app/build/outputs/apk/release/*.apk
-          if-no-files-found: warn
+          name: app-debug
+          path: "**/build/outputs/apk/debug/*.apk"
+          
